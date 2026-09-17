@@ -13,7 +13,7 @@ export function parseInvoiceText(text: string): InvoiceRead {
   const clean = text.replace(/\r/g, "");
   const numberPatterns = [
     /(?:n(?:ú|u|º|°|o)?\.?\s*(?:da\s*)?(?:nota|nf(?:-?e|c-?e)?)|nota\s*fiscal)\s*[:#-]?\s*(\d{3,12})/i,
-    /(?:número|numero)\s*[:#-]?\s*(\d{3,12})/i,
+    /(?:número|numero)\s*(?:da\s+nota(?:\s+fiscal)?)?\s*[:#-]?\s*(\d{3,12})/i,
   ];
   const numero = numberPatterns.map((pattern) => clean.match(pattern)?.[1]).find(Boolean) ?? "";
   const ignored = /^(danfe|documento auxiliar|chave de acesso|emitente|destinat|cnpj|cpf|subtotal|total|tribut|imposto|data|hora|série|serie)/i;
