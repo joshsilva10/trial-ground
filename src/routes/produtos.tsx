@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, FileImage, FileText, PackagePlus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
@@ -75,6 +75,7 @@ function ProdutosPage() {
     scanTimerRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
     setCameraAtiva(false);
     stableFramesRef.current = 0;
   }
@@ -146,30 +147,35 @@ function ProdutosPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
       streamRef.current = stream;
       setCameraAtiva(true);
-      window.setTimeout(() => {
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          void video.play();
-        }
-      }, 0);
-      scanTimerRef.current = window.setInterval(() => {
-        const video = videoRef.current;
-        if (!capturaAutomaticaRef.current || !video || video.videoWidth === 0) return;
-        const canvas = document.createElement("canvas");
-        canvas.width = 240;
-        canvas.height = Math.round(240 * (video.videoHeight / video.videoWidth));
-        const context = canvas.getContext("2d");
-        if (!context) return;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        stableFramesRef.current = frameLooksLikeDocument(canvas) ? stableFramesRef.current + 1 : 0;
-        if (stableFramesRef.current >= 3) void captureCamera();
-      }, 700);
     } catch {
       setErroLeitura("Não foi possível acessar a câmera. Autorize o uso da câmera ou selecione uma imagem.");
       setCameraAtiva(false);
     }
   }
+
+  const connectCamera = useCallback((video: HTMLVideoElement | null) => {
+    videoRef.current = video;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+    video.srcObject = stream;
+    void video.play().then(() => {
+      if (scanTimerRef.current !== null) window.clearInterval(scanTimerRef.current);
+      scanTimerRef.current = window.setInterval(() => {
+        const currentVideo = videoRef.current;
+        if (!capturaAutomaticaRef.current || !currentVideo || currentVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || currentVideo.videoWidth === 0) return;
+        const canvas = document.createElement("canvas");
+        canvas.width = 240;
+        canvas.height = Math.round(240 * (currentVideo.videoHeight / currentVideo.videoWidth));
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height);
+        stableFramesRef.current = frameLooksLikeDocument(canvas) ? stableFramesRef.current + 1 : 0;
+        if (stableFramesRef.current >= 3) void captureCamera();
+      }, 700);
+    }).catch(() => {
+      setErroLeitura("A câmera foi autorizada, mas a imagem não pôde ser exibida. Tente fechar e abrir novamente.");
+    });
+  }, []);
 
   function resetReading() {
     stopCamera();
@@ -373,7 +379,7 @@ function ProdutosPage() {
                 ) : (
                   <div className="space-y-3">
                     <div className="relative aspect-[3/4] max-h-[30rem] overflow-hidden rounded-md bg-muted">
-                      <video ref={videoRef} muted playsInline className="h-full w-full object-cover" aria-label="Imagem da câmera" />
+                      <video ref={connectCamera} autoPlay muted playsInline className="h-full w-full object-cover" aria-label="Imagem da câmera" />
                       <div className="pointer-events-none absolute inset-[8%] rounded-md border-2 border-primary shadow-[0_0_0_999px_hsl(var(--foreground)/0.28)]" />
                       <p className="absolute inset-x-3 bottom-3 rounded-md bg-background/90 px-3 py-2 text-center text-xs text-foreground">Mantenha a nota inteira, iluminada e estável dentro da moldura.</p>
                     </div>
