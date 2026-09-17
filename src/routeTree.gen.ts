@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ContratosRouteImport } from './routes/contratos'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as NovaRequisicaoRouteImport } from './routes/nova-requisicao'
 import { Route as PerfilRouteImport } from './routes/perfil'
@@ -20,6 +21,11 @@ import { Route as RequisicoesRouteImport } from './routes/requisicoes'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContratosRoute = ContratosRouteImport.update({
+  id: '/contratos',
+  path: '/contratos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -55,6 +61,7 @@ const RequisicoesRoute = RequisicoesRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/contratos': typeof ContratosRoute
   '/dashboard': typeof DashboardRoute
   '/nova-requisicao': typeof NovaRequisicaoRoute
   '/perfil': typeof PerfilRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/contratos': typeof ContratosRoute
   '/dashboard': typeof DashboardRoute
   '/nova-requisicao': typeof NovaRequisicaoRoute
   '/perfil': typeof PerfilRoute
@@ -74,6 +82,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/contratos': typeof ContratosRoute
   '/dashboard': typeof DashboardRoute
   '/nova-requisicao': typeof NovaRequisicaoRoute
   '/perfil': typeof PerfilRoute
@@ -85,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/contratos'
     | '/dashboard'
     | '/nova-requisicao'
     | '/perfil'
@@ -94,6 +104,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/contratos'
     | '/dashboard'
     | '/nova-requisicao'
     | '/perfil'
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/contratos'
     | '/dashboard'
     | '/nova-requisicao'
     | '/perfil'
@@ -113,6 +125,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ContratosRoute: typeof ContratosRoute
   DashboardRoute: typeof DashboardRoute
   NovaRequisicaoRoute: typeof NovaRequisicaoRoute
   PerfilRoute: typeof PerfilRoute
@@ -128,6 +141,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contratos': {
+      id: '/contratos'
+      path: '/contratos'
+      fullPath: '/contratos'
+      preLoaderRoute: typeof ContratosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -177,6 +197,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ContratosRoute: ContratosRoute,
   DashboardRoute: DashboardRoute,
   NovaRequisicaoRoute: NovaRequisicaoRoute,
   PerfilRoute: PerfilRoute,

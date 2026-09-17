@@ -53,7 +53,6 @@ function LoginPage() {
       return;
     }
     toast.success("Sessão iniciada");
-    void navigate({ to: "/dashboard" });
   }
 
   return (
