@@ -49,6 +49,7 @@ function ProdutosPage() {
   const [linhas, setLinhas] = useState<LinhaOcr[]>([]);
   const [cameraAtiva, setCameraAtiva] = useState(false);
   const [capturaAutomatica, setCapturaAutomatica] = useState(true);
+  const capturaAutomaticaRef = useRef(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanTimerRef = useRef<number | null>(null);
@@ -154,7 +155,7 @@ function ProdutosPage() {
       }, 0);
       scanTimerRef.current = window.setInterval(() => {
         const video = videoRef.current;
-        if (!capturaAutomatica || !video || video.videoWidth === 0) return;
+        if (!capturaAutomaticaRef.current || !video || video.videoWidth === 0) return;
         const canvas = document.createElement("canvas");
         canvas.width = 240;
         canvas.height = Math.round(240 * (video.videoHeight / video.videoWidth));
@@ -377,7 +378,10 @@ function ProdutosPage() {
                       <p className="absolute inset-x-3 bottom-3 rounded-md bg-background/90 px-3 py-2 text-center text-xs text-foreground">Mantenha a nota inteira, iluminada e estável dentro da moldura.</p>
                     </div>
                     <label className="flex items-center gap-2 text-sm text-foreground">
-                      <input type="checkbox" checked={capturaAutomatica} onChange={(event) => setCapturaAutomatica(event.target.checked)} />
+                      <input type="checkbox" checked={capturaAutomatica} onChange={(event) => {
+                        capturaAutomaticaRef.current = event.target.checked;
+                        setCapturaAutomatica(event.target.checked);
+                      }} />
                       Capturar automaticamente quando identificar uma nota
                     </label>
                     <div className="grid grid-cols-2 gap-2">
