@@ -33,6 +33,7 @@ export const Route = createFileRoute("/relatorios")({
 });
 
 const CORES = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)"];
+const MARCADORES = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4"];
 
 function RelatoriosPage() {
   const { requisitions, products, contracts, audit, users } = useApp();
@@ -98,7 +99,7 @@ function RelatoriosPage() {
           <ul className="mt-3 grid grid-cols-2 gap-2 text-sm">
             {porStatus.map((s, i) => (
               <li key={s.nome} className="flex items-center gap-2">
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: CORES[i % CORES.length] }} />
+                <span className={`size-2.5 rounded-full ${MARCADORES[i % MARCADORES.length]}`} />
                 <span className="text-muted-foreground">
                   {s.nome}: <span className="text-foreground">{s.valor}</span>
                 </span>
