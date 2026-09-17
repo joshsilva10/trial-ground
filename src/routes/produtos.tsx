@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Camera, PackagePlus, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Camera, FileImage, FileText, PackagePlus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
 import { EmptyState, Field, Panel, btnOutline, btnPrimary, inputClass } from "@/components/Ui";
+import { Button } from "@/components/ui/button";
+import { frameLooksLikeDocument, readInvoice, type InvoiceLine } from "@/lib/invoice-ocr";
 import { PERMISSOES, formatDataHora, useApp } from "@/lib/store";
 
 export const Route = createFileRoute("/produtos")({
@@ -21,7 +23,7 @@ export const Route = createFileRoute("/produtos")({
   component: ProdutosPage,
 });
 
-type LinhaOcr = { nome: string; quantidade: number; produtoId?: string };
+type LinhaOcr = InvoiceLine;
 
 const PAGINA = 8;
 
@@ -40,7 +42,18 @@ function ProdutosPage() {
 
   const [arquivo, setArquivo] = useState<string>("");
   const [processando, setProcessando] = useState(false);
+  const [progresso, setProgresso] = useState(0);
+  const [erroLeitura, setErroLeitura] = useState("");
+  const [numeroNota, setNumeroNota] = useState("");
+  const [textoLido, setTextoLido] = useState("");
   const [linhas, setLinhas] = useState<LinhaOcr[]>([]);
+  const [cameraAtiva, setCameraAtiva] = useState(false);
+  const [capturaAutomatica, setCapturaAutomatica] = useState(true);
+  const capturaAutomaticaRef = useRef(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanTimerRef = useRef<number | null>(null);
+  const stableFramesRef = useRef(0);
 
   const filtrados = useMemo(() => {
     const termo = busca.trim().toLowerCase();
@@ -57,18 +70,115 @@ function ProdutosPage() {
   const paginaAtual = Math.min(pagina, totalPaginas);
   const visiveis = filtrados.slice((paginaAtual - 1) * PAGINA, paginaAtual * PAGINA);
 
-  function simularOcr(fileName: string) {
+  function stopCamera() {
+    if (scanTimerRef.current !== null) window.clearInterval(scanTimerRef.current);
+    scanTimerRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraAtiva(false);
+    stableFramesRef.current = 0;
+  }
+
+  useEffect(() => () => {
+    if (scanTimerRef.current !== null) window.clearInterval(scanTimerRef.current);
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  function linkProducts(items: InvoiceLine[]) {
+    const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
+    return items.map((item) => {
+      const wanted = normalize(item.nome);
+      const found = products.find((product) => {
+        const current = normalize(product.nome);
+        return current === wanted || current.includes(wanted) || wanted.includes(current);
+      });
+      return found ? { ...item, produtoId: found.id } : item;
+    });
+  }
+
+  async function processDocument(file: File | Blob, fileName: string) {
     setProcessando(true);
+    setErroLeitura("");
+    setProgresso(0);
     setArquivo(fileName);
-    window.setTimeout(() => {
-      const base = products.slice(0, 2);
-      setLinhas([
-        ...base.map((p) => ({ nome: p.nome, quantidade: 10, produtoId: p.id })),
-        { nome: "Grampeador metálico 26/6", quantidade: 5 },
-      ]);
+    setLinhas([]);
+    try {
+      const result = await readInvoice(file, setProgresso);
+      setNumeroNota(result.numero);
+      setTextoLido(result.texto);
+      setLinhas(linkProducts(result.linhas));
+      if (result.linhas.length === 0) {
+        setErroLeitura("O texto foi lido, mas nenhum item pôde ser identificado. Confira o conteúdo e adicione os itens manualmente.");
+      } else if (!result.numero) {
+        setErroLeitura("Os itens foram identificados, mas o número da nota precisa ser informado manualmente.");
+      } else {
+        toast.success("Leitura concluída. Confira os dados antes de confirmar.");
+      }
+    } catch (error) {
+      setErroLeitura(error instanceof Error ? `Não foi possível ler o documento: ${error.message}` : "Não foi possível ler o documento.");
+    } finally {
       setProcessando(false);
-      toast.info("Leitura simulada concluída — confira e confirme os itens.");
-    }, 900);
+    }
+  }
+
+  async function captureCamera() {
+    const video = videoRef.current;
+    if (!video || video.videoWidth === 0 || processando) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(video, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) return;
+    stopCamera();
+    await processDocument(blob, `captura-${new Date().toLocaleTimeString("pt-BR").replaceAll(":", "-")}.jpg`);
+  }
+
+  async function startCamera() {
+    setErroLeitura("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErroLeitura("A câmera não está disponível neste navegador.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      streamRef.current = stream;
+      setCameraAtiva(true);
+      window.setTimeout(() => {
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          void video.play();
+        }
+      }, 0);
+      scanTimerRef.current = window.setInterval(() => {
+        const video = videoRef.current;
+        if (!capturaAutomaticaRef.current || !video || video.videoWidth === 0) return;
+        const canvas = document.createElement("canvas");
+        canvas.width = 240;
+        canvas.height = Math.round(240 * (video.videoHeight / video.videoWidth));
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        stableFramesRef.current = frameLooksLikeDocument(canvas) ? stableFramesRef.current + 1 : 0;
+        if (stableFramesRef.current >= 3) void captureCamera();
+      }, 700);
+    } catch {
+      setErroLeitura("Não foi possível acessar a câmera. Autorize o uso da câmera ou selecione uma imagem.");
+      setCameraAtiva(false);
+    }
+  }
+
+  function resetReading() {
+    stopCamera();
+    setLinhas([]);
+    setArquivo("");
+    setNumeroNota("");
+    setTextoLido("");
+    setErroLeitura("");
+    setProgresso(0);
   }
 
   return (
@@ -232,29 +342,71 @@ function ProdutosPage() {
             ) : (
               <div className="space-y-3">
                 <p className="rounded-md bg-info-soft px-3 py-2 text-xs text-info-strong">
-                  Leitura de nota fiscal simulada nesta validação: a captura funciona, mas os dados
-                  extraídos são de exemplo e devem ser conferidos antes de confirmar.
+                  A leitura acontece somente neste navegador. Confira o número e os itens: a entrada só será registrada após sua confirmação.
                 </p>
-                <Field label="Capturar ou selecionar a nota fiscal">
-                  <input
-                    className={inputClass}
-                    type="file"
-                    accept="image/*,application/pdf"
-                    capture="environment"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) simularOcr(f.name);
-                    }}
-                  />
-                </Field>
+                {!cameraAtiva ? (
+                  <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                    <Button type="button" onClick={() => void startCamera()} disabled={processando}>
+                      <Camera aria-hidden /> Escanear nota
+                    </Button>
+                    <label className={`${btnOutline} cursor-pointer`}>
+                      <FileImage className="size-4" aria-hidden /> Selecionar imagem
+                      <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (!file) return;
+                        if (file.size > 20 * 1024 * 1024) return setErroLeitura("O arquivo excede o limite de 20 MB.");
+                        void processDocument(file, file.name);
+                      }} />
+                    </label>
+                    <label className={`${btnOutline} cursor-pointer`}>
+                      <FileText className="size-4" aria-hidden /> Selecionar PDF
+                      <input className="sr-only" type="file" accept="application/pdf" onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (!file) return;
+                        if (file.size > 20 * 1024 * 1024) return setErroLeitura("O arquivo excede o limite de 20 MB.");
+                        void processDocument(file, file.name);
+                      }} />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="relative aspect-[3/4] max-h-[30rem] overflow-hidden rounded-md bg-muted">
+                      <video ref={videoRef} muted playsInline className="h-full w-full object-cover" aria-label="Imagem da câmera" />
+                      <div className="pointer-events-none absolute inset-[8%] rounded-md border-2 border-primary shadow-[0_0_0_999px_hsl(var(--foreground)/0.28)]" />
+                      <p className="absolute inset-x-3 bottom-3 rounded-md bg-background/90 px-3 py-2 text-center text-xs text-foreground">Mantenha a nota inteira, iluminada e estável dentro da moldura.</p>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-foreground">
+                      <input type="checkbox" checked={capturaAutomatica} onChange={(event) => {
+                        capturaAutomaticaRef.current = event.target.checked;
+                        setCapturaAutomatica(event.target.checked);
+                      }} />
+                      Capturar automaticamente quando identificar uma nota
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button type="button" onClick={() => void captureCamera()}><Camera aria-hidden /> Capturar agora</Button>
+                      <Button type="button" variant="outline" onClick={stopCamera}><X aria-hidden /> Cancelar</Button>
+                    </div>
+                  </div>
+                )}
 
-                {processando ? <p className="text-sm text-muted-foreground">Lendo documento...</p> : null}
+                {processando ? (
+                  <div role="status" className="space-y-1.5">
+                    <div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(progresso * 100)}%` }} /></div>
+                    <p className="text-sm text-muted-foreground">Lendo documento… {Math.round(progresso * 100)}%</p>
+                  </div>
+                ) : null}
+                {erroLeitura ? <p role="alert" className="rounded-md bg-warning-soft px-3 py-2 text-xs text-warning-strong">{erroLeitura}</p> : null}
 
-                {linhas.length > 0 ? (
+                {arquivo && !processando ? (
                   <div className="space-y-3">
                     <p className="text-xs text-muted-foreground">Documento: {arquivo}</p>
+                    <Field label="Número da nota fiscal" hint="Confira este campo antes de registrar a entrada.">
+                      <input className={inputClass} value={numeroNota} onChange={(event) => setNumeroNota(event.target.value)} placeholder="Ex.: 000123456" />
+                    </Field>
                     {linhas.map((l, i) => (
-                      <div key={i} className="grid grid-cols-[1fr_5rem] gap-2">
+                      <div key={i} className="grid grid-cols-[1fr_5rem_2.25rem] gap-2">
                         <input
                           className={inputClass}
                           value={l.nome}
@@ -275,20 +427,26 @@ function ProdutosPage() {
                             )
                           }
                         />
+                        <Button type="button" variant="ghost" size="icon" aria-label={`Remover item ${i + 1}`} onClick={() => setLinhas((previous) => previous.filter((_, index) => index !== i))}>
+                          <Trash2 aria-hidden />
+                        </Button>
                       </div>
                     ))}
+                    <Button type="button" variant="outline" className="w-full" onClick={() => setLinhas((previous) => [...previous, { nome: "", quantidade: 1 }])}>Adicionar item</Button>
+                    {linhas.length === 0 && textoLido ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Ver texto identificado</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3">{textoLido}</pre></details> : null}
                     <button
                       type="button"
                       className={`${btnPrimary} w-full`}
+                      disabled={!numeroNota.trim() || linhas.length === 0 || linhas.some((line) => !line.nome.trim() || line.quantidade <= 0)}
                       onClick={() => {
-                        registerEntry(linhas, `Nota fiscal ${arquivo}`);
-                        setLinhas([]);
-                        setArquivo("");
+                        registerEntry(linhas, `Nota fiscal nº ${numeroNota.trim()} (${arquivo})`);
+                        resetReading();
                         toast.success("Entrada registrada e estoque atualizado");
                       }}
                     >
                       Confirmar entrada no estoque
                     </button>
+                    <Button type="button" variant="outline" className="w-full" onClick={resetReading}>Cancelar leitura</Button>
                   </div>
                 ) : null}
               </div>
