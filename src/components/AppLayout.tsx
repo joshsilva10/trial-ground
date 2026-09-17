@@ -18,11 +18,11 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; roles?
 
 const NAV: NavItem[] = [
   { to: "/dashboard", label: "Painel", icon: LayoutDashboard },
-  { to: "/produtos", label: "Produtos e estoque", icon: Boxes, roles: PERMISSOES.estoque },
+  { to: "/produtos", label: "Produtos e estoque", icon: Boxes, roles: PERMISSOES["estoque"] },
   { to: "/nova-requisicao", label: "Nova requisição", icon: PlusCircle },
   { to: "/requisicoes", label: "Requisições", icon: ClipboardList },
-  { to: "/contratos", label: "Contratos", icon: FileText, roles: PERMISSOES.contratos },
-  { to: "/relatorios", label: "Relatórios gerenciais", icon: BarChart3, roles: PERMISSOES.relatorios },
+  { to: "/contratos", label: "Contratos", icon: FileText, roles: PERMISSOES["contratos"] },
+  { to: "/relatorios", label: "Relatórios gerenciais", icon: BarChart3, roles: PERMISSOES["relatorios"] },
   { to: "/perfil", label: "Meu perfil", icon: UserRound },
 ];
 

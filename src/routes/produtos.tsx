@@ -75,7 +75,7 @@ function ProdutosPage() {
     <AppLayout
       titulo="Produtos e estoque"
       descricao="Cadastro de produtos, saldos e entradas"
-      requer={PERMISSOES.estoque}
+      requer={PERMISSOES["estoque"]}
     >
       <div className="grid gap-4 xl:grid-cols-3">
         <Panel className="xl:col-span-2" title="Estoque atual">

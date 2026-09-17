@@ -69,7 +69,7 @@ function RelatoriosPage() {
     <AppLayout
       titulo="Relatórios gerenciais"
       descricao="Indicadores do MVP — conjunto inicial para validação"
-      requer={PERMISSOES.relatorios}
+      requer={PERMISSOES["relatorios"]}
     >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Requisições" value={requisitions.length} hint="Total registrado" />

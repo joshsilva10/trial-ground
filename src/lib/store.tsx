@@ -386,7 +386,7 @@ export function useApp() {
   return ctx;
 }
 
-export const PERMISSOES: Record<string, Role[]> = {
+export const PERMISSOES: Record<"estoque" | "requisicoesAnalise" | "contratos" | "relatorios", Role[]> = {
   estoque: ["desenvolvimento", "operador"],
   requisicoesAnalise: ["desenvolvimento", "operador"],
   contratos: ["desenvolvimento", "gestao", "operador"],
@@ -394,7 +394,7 @@ export const PERMISSOES: Record<string, Role[]> = {
 };
 
 export function podeAcessar(role: Role | undefined, area: keyof typeof PERMISSOES) {
-  return !!role && PERMISSOES[area].includes(role);
+  return role ? PERMISSOES[area].includes(role) : false;
 }
 
 export const formatBRL = (centavos: number) =>
