@@ -9,6 +9,7 @@ const InputSchema = z.object({
   fileName: z.string().trim().min(1).max(180),
   mediaType: z.enum(acceptedTypes),
   base64: z.string().min(1),
+  headerBase64: z.string().nullable(),
 });
 
 const InvoiceSchema = z.object({
@@ -57,6 +58,9 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
     const attachment = data.mediaType === "application/pdf"
       ? { type: "file" as const, data: dataUrl, mediaType: data.mediaType, filename: data.fileName }
       : { type: "image" as const, image: dataUrl, mediaType: data.mediaType };
+    const headerAttachment = data.headerBase64 && data.mediaType !== "application/pdf"
+      ? { type: "image" as const, image: `data:image/jpeg;base64,${data.headerBase64}`, mediaType: "image/jpeg" as const }
+      : null;
 
     try {
       const result = streamText({
@@ -71,6 +75,7 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
               text: "Leia esta nota fiscal brasileira. Extraia o número da nota (não a chave de acesso, série, pedido ou protocolo) e todos os produtos da tabela, com descrição completa e quantidade. Ignore emitente, destinatário, impostos, frete, totais e textos fora da tabela. Se um dado não estiver legível, use string vazia ou lista vazia. Retorne no máximo 80 itens.",
             },
             attachment,
+            ...(headerAttachment ? [headerAttachment] : []),
           ],
         }],
         providerOptions: {

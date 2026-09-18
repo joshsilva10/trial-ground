@@ -110,6 +110,21 @@ function ProdutosPage() {
     return window.btoa(binary);
   }
 
+  async function makeHeaderCrop(file: Blob) {
+    if (!file.type.startsWith("image/")) return null;
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const sourceHeight = Math.max(1, Math.round(bitmap.height * 0.35));
+    const scale = Math.min(3, 2400 / bitmap.width);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(sourceHeight * scale);
+    const context = canvas.getContext("2d");
+    context?.drawImage(bitmap, 0, 0, bitmap.width, sourceHeight, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const crop = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
+    return crop ? blobToBase64(crop) : null;
+  }
+
   async function processDocument(file: File | Blob, fileName: string) {
     setProcessando(true);
     setErroLeitura("");
@@ -134,6 +149,7 @@ function ProdutosPage() {
             fileName,
             mediaType,
             base64: await blobToBase64(file),
+            headerBase64: await makeHeaderCrop(file),
           },
         });
         // O cabeçalho da DANFE costuma ser mais confiável no OCR local; a IA
