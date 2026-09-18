@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, FileImage, FileText, PackagePlus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
 import { EmptyState, Field, Panel, btnOutline, btnPrimary, inputClass } from "@/components/Ui";
 import { Button } from "@/components/ui/button";
+import { extractInvoiceWithAi } from "@/lib/invoice-ai.functions";
 import { frameLooksLikeDocument, readInvoice, type InvoiceLine } from "@/lib/invoice-ocr";
 import { PERMISSOES, formatDataHora, useApp } from "@/lib/store";
 
@@ -29,6 +31,7 @@ const PAGINA = 8;
 
 function ProdutosPage() {
   const { products, movements, addProduct, registerEntry } = useApp();
+  const extractWithAi = useServerFn(extractInvoiceWithAi);
   const [busca, setBusca] = useState("");
   const [pagina, setPagina] = useState(1);
   const [aba, setAba] = useState<"manual" | "ocr">("manual");
@@ -97,6 +100,16 @@ function ProdutosPage() {
     });
   }
 
+  async function blobToBase64(file: Blob) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const chunkSize = 0x8000;
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return window.btoa(binary);
+  }
+
   async function processDocument(file: File | Blob, fileName: string) {
     setProcessando(true);
     setErroLeitura("");
@@ -104,16 +117,42 @@ function ProdutosPage() {
     setArquivo(fileName);
     setLinhas([]);
     try {
-      const result = await readInvoice(file, setProgresso);
-      setNumeroNota(result.numero);
-      setTextoLido(result.texto);
-      setLinhas(linkProducts(result.linhas));
-      if (result.linhas.length === 0) {
-        setErroLeitura("O texto foi lido, mas nenhum item pôde ser identificado. Confira o conteúdo e adicione os itens manualmente.");
-      } else if (!result.numero) {
+      const localResult = await readInvoice(file, (progress) => setProgresso(progress * 0.72));
+      setTextoLido(localResult.texto);
+      setProgresso(0.78);
+
+      let numero = localResult.numero;
+      let items = localResult.linhas;
+      let aiError = "";
+      try {
+        const mediaType = file.type;
+        if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp" && mediaType !== "application/pdf") {
+          throw new Error("Formato não aceito. Use JPEG, PNG, WebP ou PDF.");
+        }
+        const aiResult = await extractWithAi({
+          data: {
+            fileName,
+            mediaType,
+            base64: await blobToBase64(file),
+          },
+        });
+        numero = aiResult.numero || numero;
+        if (aiResult.itens.length > 0) items = aiResult.itens;
+      } catch (error) {
+        aiError = error instanceof Error ? error.message : "A leitura por IA não está disponível agora.";
+      }
+
+      setProgresso(1);
+      setNumeroNota(numero);
+      setLinhas(linkProducts(items));
+      if (items.length === 0) {
+        setErroLeitura(aiError || "Nenhum item pôde ser identificado. Confira o conteúdo e adicione os itens manualmente.");
+      } else if (!numero) {
         setErroLeitura("Os itens foram identificados, mas o número da nota precisa ser informado manualmente.");
+      } else if (aiError) {
+        setErroLeitura(`A leitura local foi preservada. ${aiError}`);
       } else {
-        toast.success("Leitura concluída. Confira os dados antes de confirmar.");
+        toast.success("Leitura com IA concluída. Confira os dados antes de confirmar.");
       }
     } catch (error) {
       setErroLeitura(error instanceof Error ? `Não foi possível ler o documento: ${error.message}` : "Não foi possível ler o documento.");
