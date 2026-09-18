@@ -136,7 +136,9 @@ function ProdutosPage() {
             base64: await blobToBase64(file),
           },
         });
-        numero = aiResult.numero || numero;
+        // O cabeçalho da DANFE costuma ser mais confiável no OCR local; a IA
+        // complementa o número apenas quando o scanner não encontrou nenhum.
+        numero = numero || aiResult.numero;
         if (aiResult.itens.length > 0) items = aiResult.itens;
       } catch (error) {
         aiError = error instanceof Error ? error.message : "A leitura por IA não está disponível agora.";
