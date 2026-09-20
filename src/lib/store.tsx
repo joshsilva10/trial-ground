@@ -72,33 +72,36 @@ function seedRequisitions(): Requisition[] {
       solicitanteId: "u4",
       data: "2026-09-10T13:20:00.000Z",
       itens: [
-        { produtoId: "p1", quantidadeSolicitada: 4, quantidadeAprovada: 4 },
-        { produtoId: "p2", quantidadeSolicitada: 10, quantidadeAprovada: 4 },
+        { id: "ri1", produtoId: "p1", quantidadeSolicitada: 4, quantidadeAprovada: 4 },
+        { id: "ri2", produtoId: "p2", quantidadeSolicitada: 10, quantidadeAprovada: 4 },
       ],
       observacao: "Reposição do atendimento.",
       status: "aprovada_parcial",
-      analise: {
+      analises: [{
         analistaId: "u3",
         data: "2026-09-11T11:05:00.000Z",
         decisao: "aprovada_parcial",
         justificativa: "Canetas com saldo reduzido; liberada quantidade parcial.",
-      },
+        complementos: [{ itemId: "ri1", quantidade: 4 }, { itemId: "ri2", quantidade: 4 }],
+      }],
     },
     {
       id: "r2",
       solicitanteId: "u2",
       data: "2026-09-15T17:40:00.000Z",
-      itens: [{ produtoId: "p3", quantidadeSolicitada: 2, quantidadeAprovada: 0 }],
+      itens: [{ id: "ri3", produtoId: "p3", quantidadeSolicitada: 2, quantidadeAprovada: 0 }],
       observacao: "Toner para impressora da diretoria (item em ruptura).",
       status: "pendente",
+      analises: [],
     },
     {
       id: "r3",
       solicitanteId: "u3",
       data: "2026-09-16T12:00:00.000Z",
-      itens: [{ produtoId: "p5", quantidadeSolicitada: 6, quantidadeAprovada: 0 }],
+      itens: [{ id: "ri4", produtoId: "p5", quantidadeSolicitada: 6, quantidadeAprovada: 0 }],
       observacao: "Copa do 3º andar.",
       status: "pendente",
+      analises: [],
     },
   ];
 }
@@ -148,7 +151,7 @@ type Ctx = {
   addProduct: (p: Omit<Product, "id">) => void;
   registerEntry: (entries: { produtoId?: string; nome: string; quantidade: number }[], origem: string) => void;
   createRequisition: (
-    itens: { produtoId: string; quantidadeSolicitada: number }[],
+    itens: { produtoId?: string; nomeAvulso?: string; unidadeAvulsa?: string; quantidadeSolicitada: number }[],
     observacao: string,
   ) => string;
   decideRequisition: (
@@ -156,7 +159,7 @@ type Ctx = {
     decisao: RequisitionStatus,
     aprovadas: Record<string, number>,
     justificativa: string,
-  ) => void;
+  ) => { ok: boolean; erro?: string };
   addContract: (c: Omit<Contract, "id" | "criadoPor" | "criadoEm">) => void;
   attachContractFile: (id: string, file: { nome: string; tamanho: number }) => void;
 };
@@ -261,9 +264,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         id: uid("r"),
         solicitanteId: currentUser.id,
         data: hoje(),
-        itens: itens.map((i) => ({ ...i, quantidadeAprovada: 0 })),
+        itens: itens.map((i) => ({ ...i, id: uid("ri"), quantidadeAprovada: 0 })),
         status: "pendente",
         observacao,
+        analises: [],
       };
       setRequisitions((prev) => [nova, ...prev]);
       registerAudit(currentUser.id, "criar", `requisição ${nova.id}`, "pendente");
@@ -274,26 +278,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const decideRequisition = useCallback<Ctx["decideRequisition"]>(
     (id, decisao, aprovadas, justificativa) => {
-      if (!currentUser) return;
-      let baixas: { produtoId: string; quantidade: number }[] = [];
-      setRequisitions((prev) =>
-        prev.map((r) => {
-          if (r.id !== id) return r;
-          const itens = r.itens.map((i) => ({
-            ...i,
-            quantidadeAprovada: decisao === "rejeitada" ? 0 : (aprovadas[i.produtoId] ?? 0),
-          }));
-          baixas = itens
-            .filter((i) => i.quantidadeAprovada > 0)
-            .map((i) => ({ produtoId: i.produtoId, quantidade: i.quantidadeAprovada }));
-          return {
-            ...r,
-            itens,
-            status: decisao,
-            analise: { analistaId: currentUser.id, data: hoje(), decisao, justificativa },
-          };
-        }),
-      );
+      if (!currentUser) return { ok: false, erro: "Sessão não encontrada." };
+      const requisicao = requisitions.find((r) => r.id === id);
+      if (!requisicao) return { ok: false, erro: "Requisição não encontrada." };
+
+      const complementos = requisicao.itens.map((item) => {
+        const total = decisao === "rejeitada" ? item.quantidadeAprovada : (aprovadas[item.id] ?? item.quantidadeAprovada);
+        return { item, total, delta: total - item.quantidadeAprovada };
+      });
+      if (complementos.some(({ item, total }) => total < item.quantidadeAprovada || total > item.quantidadeSolicitada)) {
+        return { ok: false, erro: "A liberação não pode diminuir nem ultrapassar a quantidade solicitada." };
+      }
+      for (const { item, delta } of complementos) {
+        if (!item.produtoId || delta <= 0) continue;
+        const saldo = products.find((p) => p.id === item.produtoId)?.quantidade ?? 0;
+        if (delta > saldo) return { ok: false, erro: "O complemento informado ultrapassa o saldo atual." };
+      }
+
+      const baixas = complementos
+        .filter(({ item, delta }) => Boolean(item.produtoId) && delta > 0)
+        .map(({ item, delta }) => ({ produtoId: item.produtoId ?? "", quantidade: delta }));
+      const itens = requisicao.itens.map((item) => ({
+        ...item,
+        quantidadeAprovada: complementos.find((c) => c.item.id === item.id)?.total ?? item.quantidadeAprovada,
+      }));
+      const status: RequisitionStatus = decisao === "rejeitada"
+        ? "rejeitada"
+        : itens.every((item) => item.quantidadeAprovada === item.quantidadeSolicitada)
+          ? "aprovada_total"
+          : "aprovada_parcial";
+      const registro = {
+        analistaId: currentUser.id,
+        data: hoje(),
+        decisao: status,
+        justificativa,
+        complementos: complementos.filter((c) => c.delta > 0).map((c) => ({ itemId: c.item.id, quantidade: c.delta })),
+      };
+      setRequisitions((prev) => prev.map((r) => r.id === id ? { ...r, itens, status, analises: [...r.analises, registro] } : r));
       if (baixas.length) {
         setProducts((prev) =>
           prev.map((p) => {
@@ -313,9 +334,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ...prev,
         ]);
       }
-      registerAudit(currentUser.id, "analisar", `requisição ${id}`, decisao);
+      registerAudit(currentUser.id, "analisar", `requisição ${id}`, status);
+      return { ok: true };
     },
-    [currentUser, registerAudit],
+    [currentUser, products, requisitions, registerAudit],
   );
 
   const addContract = useCallback<Ctx["addContract"]>(
