@@ -8,3 +8,5 @@
 - [x] Implementar OCR local para imagem e PDF e extrair número fiscal e itens.
 - [x] Adicionar revisão, correção e remoção de itens antes de atualizar o estoque.
 - [x] Validar erros, compilação e fluxos em desktop e celular.
+- [ ] Permitir complemento de liberações e revisão de recusas sem duplicar baixas de estoque.
+- [ ] Permitir solicitar produtos ainda não cadastrados e validar os novos fluxos.

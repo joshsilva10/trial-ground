@@ -45,9 +45,20 @@ export const STATUS_LABEL: Record<RequisitionStatus, string> = {
 };
 
 export type RequisitionItem = {
-  produtoId: string;
+  id: string;
+  produtoId?: string;
+  nomeAvulso?: string;
+  unidadeAvulsa?: string;
   quantidadeSolicitada: number;
   quantidadeAprovada: number;
+};
+
+export type RequisitionAnalysis = {
+  analistaId: string;
+  data: string;
+  decisao: RequisitionStatus;
+  justificativa: string;
+  complementos: { itemId: string; quantidade: number }[];
 };
 
 export type Requisition = {
@@ -57,12 +68,7 @@ export type Requisition = {
   itens: RequisitionItem[];
   status: RequisitionStatus;
   observacao: string;
-  analise?: {
-    analistaId: string;
-    data: string;
-    decisao: RequisitionStatus;
-    justificativa: string;
-  };
+  analises: RequisitionAnalysis[];
 };
 
 export type Contract = {
