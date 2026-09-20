@@ -47,49 +47,54 @@ function RequisicoesPage() {
 
   const nomeDe = (id: string) => users.find((u) => u.id === id)?.nome ?? "—";
   const prodDe = (id: string) => products.find((p) => p.id === id);
+  const podeRevisar = (r: Requisition) =>
+    podeAnalisar && ["pendente", "aprovada_parcial", "rejeitada"].includes(r.status);
 
   function abrir(r: Requisition) {
     setAberta(r);
     setAprovadas(
       Object.fromEntries(
         r.itens.map((i) => [
-          i.produtoId,
-          r.status === "pendente"
-            ? Math.min(i.quantidadeSolicitada, prodDe(i.produtoId)?.quantidade ?? 0)
-            : i.quantidadeAprovada,
+          i.id,
+          i.quantidadeAprovada,
         ]),
       ),
     );
-    setJustificativa(r.analise?.justificativa ?? "");
+    setJustificativa("");
   }
 
   function decidir(decisao: RequisitionStatus) {
     if (!aberta) return;
-    if (decisao === "aprovada_parcial") {
-      const alguma = aberta.itens.some((i) => (aprovadas[i.produtoId] ?? 0) > 0);
+    if (decisao !== "rejeitada") {
+      const alguma = aberta.itens.some((i) => (aprovadas[i.id] ?? 0) > i.quantidadeAprovada);
       const todasCheias = aberta.itens.every(
-        (i) => (aprovadas[i.produtoId] ?? 0) === i.quantidadeSolicitada,
+        (i) => (aprovadas[i.id] ?? 0) === i.quantidadeSolicitada,
       );
       if (!alguma) {
-        toast.error("Informe ao menos uma quantidade aprovada.");
+        toast.error("Informe ao menos uma nova quantidade para liberar.");
         return;
       }
-      if (todasCheias) {
-        toast.error("Quantidades iguais ao solicitado: use aprovação total.");
+      if (decisao === "aprovada_total" && !todasCheias) {
+        toast.error("Para aprovação total, libere toda a quantidade solicitada.");
         return;
       }
     }
+    let resultado;
     if (decisao === "aprovada_total") {
-      decideRequisition(
+      resultado = decideRequisition(
         aberta.id,
         decisao,
-        Object.fromEntries(aberta.itens.map((i) => [i.produtoId, i.quantidadeSolicitada])),
+        Object.fromEntries(aberta.itens.map((i) => [i.id, i.quantidadeSolicitada])),
         justificativa,
       );
     } else {
-      decideRequisition(aberta.id, decisao, aprovadas, justificativa);
+      resultado = decideRequisition(aberta.id, decisao, aprovadas, justificativa);
     }
-    toast.success(`Requisição ${STATUS_LABEL[decisao].toLowerCase()}`);
+    if (!resultado.ok) {
+      toast.error(resultado.erro ?? "Não foi possível registrar a decisão.");
+      return;
+    }
+    toast.success(decisao === "rejeitada" ? "Recusa registrada" : "Liberação registrada");
     setAberta(null);
   }
 
@@ -135,7 +140,7 @@ function RequisicoesPage() {
                   <div className="flex items-center gap-3">
                     <StatusBadge status={r.status} />
                     <button type="button" className={btnOutline} onClick={() => abrir(r)}>
-                      {podeAnalisar && r.status === "pendente" ? "Analisar" : "Detalhes"}
+                      {podeRevisar(r) ? (r.status === "pendente" ? "Analisar" : "Revisar") : "Detalhes"}
                     </button>
                   </div>
                 </li>
@@ -186,29 +191,36 @@ function RequisicoesPage() {
 
               <div className="space-y-3">
                 {aberta.itens.map((i) => {
-                  const p = prodDe(i.produtoId);
-                  const editavel = podeAnalisar && aberta.status === "pendente";
+                  const p = i.produtoId ? prodDe(i.produtoId) : undefined;
+                  const nome = p?.nome ?? i.nomeAvulso ?? "Produto não informado";
+                  const unidade = p?.unidade ?? i.unidadeAvulsa ?? "un";
+                  const editavel = podeRevisar(aberta);
+                  const restante = i.quantidadeSolicitada - i.quantidadeAprovada;
                   return (
-                    <div key={i.produtoId} className="rounded-md border border-border p-3">
-                      <p className="text-sm font-medium text-foreground">{p?.nome}</p>
+                    <div key={i.id} className="rounded-md border border-border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-foreground">{nome}</p>
+                        {!p ? <span className="rounded-full bg-warning-soft px-2 py-1 text-xs font-medium text-warning-strong">Não cadastrado</span> : null}
+                      </div>
                       <p className="text-xs text-muted-foreground">
-                        Solicitado {i.quantidadeSolicitada} {p?.unidade} · saldo {p?.quantidade}
+                        Solicitado {i.quantidadeSolicitada} {unidade} · liberado {i.quantidadeAprovada} · falta {restante}
+                        {p ? ` · saldo ${p.quantidade}` : " · sem baixa automática no estoque"}
                         {p?.quantidade === 0 ? " (ruptura)" : ""}
                       </p>
                       {editavel ? (
                         <div className="mt-2">
-                          <Field label="Quantidade a aprovar">
+                          <Field label="Total a liberar">
                             <input
                               className={inputClass}
                               type="number"
-                              min={0}
+                              min={i.quantidadeAprovada}
                               max={i.quantidadeSolicitada}
-                              value={aprovadas[i.produtoId] ?? 0}
+                              value={aprovadas[i.id] ?? i.quantidadeAprovada}
                               onChange={(e) =>
                                 setAprovadas((prev) => ({
                                   ...prev,
-                                  [i.produtoId]: Math.max(
-                                    0,
+                                  [i.id]: Math.max(
+                                    i.quantidadeAprovada,
                                     Math.min(i.quantidadeSolicitada, Number(e.target.value) || 0),
                                   ),
                                 }))
@@ -218,7 +230,7 @@ function RequisicoesPage() {
                         </div>
                       ) : (
                         <p className="mt-1 text-xs text-foreground">
-                          Aprovado: {i.quantidadeAprovada} {p?.unidade}
+                          Liberado: {i.quantidadeAprovada} {unidade}
                         </p>
                       )}
                     </div>
@@ -226,9 +238,9 @@ function RequisicoesPage() {
                 })}
               </div>
 
-              {podeAnalisar && aberta.status === "pendente" ? (
+              {podeRevisar(aberta) ? (
                 <div className="space-y-3">
-                  <Field label="Justificativa da decisão">
+                  <Field label="Justificativa da decisão ou complemento">
                     <textarea
                       className={`${inputClass} min-h-20`}
                       value={justificativa}
@@ -237,33 +249,45 @@ function RequisicoesPage() {
                   </Field>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" className={btnPrimary} onClick={() => decidir("aprovada_total")}>
-                      Aprovar total
+                      Liberar tudo
                     </button>
                     <button type="button" className={btnOutline} onClick={() => decidir("aprovada_parcial")}>
-                      Aprovar parcial
+                      Salvar liberação
                     </button>
                     <button
                       type="button"
                       className="inline-flex items-center justify-center rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/20"
                       onClick={() => decidir("rejeitada")}
                     >
-                      Rejeitar
+                      {aberta.status === "rejeitada" ? "Manter recusada" : "Recusar restante"}
                     </button>
                   </div>
                 </div>
-              ) : aberta.analise ? (
-                <div className="rounded-md bg-muted p-3 text-sm">
-                  <p className="font-medium text-foreground">Análise registrada</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {nomeDe(aberta.analise.analistaId)} · {formatDataHora(aberta.analise.data)}
-                  </p>
-                  {aberta.analise.justificativa ? (
-                    <p className="mt-1 text-muted-foreground">{aberta.analise.justificativa}</p>
-                  ) : null}
-                </div>
-              ) : (
+              ) : aberta.analises.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Aguardando análise da equipe administrativa.</p>
-              )}
+              ) : null}
+
+              {aberta.analises.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Histórico de decisões</p>
+                  {[...aberta.analises].reverse().map((analise, indice) => {
+                    const totalComplementado = analise.complementos.reduce((soma, item) => soma + item.quantidade, 0);
+                    return (
+                      <div key={`${analise.data}-${indice}`} className="rounded-md bg-muted p-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium text-foreground">{STATUS_LABEL[analise.decisao]}</span>
+                          <span className="text-xs text-muted-foreground">{formatDataHora(analise.data)}</span>
+                        </div>
+                        <p className="mt-1 text-muted-foreground">{nomeDe(analise.analistaId)}</p>
+                        {totalComplementado > 0 ? (
+                          <p className="mt-1 text-muted-foreground">Complemento liberado: {totalComplementado} unidade(s)</p>
+                        ) : null}
+                        {analise.justificativa ? <p className="mt-1 text-muted-foreground">{analise.justificativa}</p> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           )}
         </Panel>
