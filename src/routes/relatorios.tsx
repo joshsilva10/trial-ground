@@ -50,11 +50,15 @@ function RelatoriosPage() {
     const mapa = new Map<string, number>();
     for (const r of requisitions) {
       for (const i of r.itens) {
-        mapa.set(i.produtoId, (mapa.get(i.produtoId) ?? 0) + i.quantidadeSolicitada);
+        const chave = i.produtoId ?? `avulso:${i.nomeAvulso ?? "Produto não cadastrado"}`;
+        mapa.set(chave, (mapa.get(chave) ?? 0) + i.quantidadeSolicitada);
       }
     }
     return [...mapa.entries()]
-      .map(([id, qtd]) => ({ nome: products.find((p) => p.id === id)?.nome ?? "—", qtd }))
+      .map(([id, qtd]) => ({
+        nome: id.startsWith("avulso:") ? id.slice(7) : (products.find((p) => p.id === id)?.nome ?? "—"),
+        qtd,
+      }))
       .sort((a, b) => b.qtd - a.qtd)
       .slice(0, 5);
   }, [requisitions, products]);
