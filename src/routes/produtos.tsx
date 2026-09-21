@@ -51,6 +51,7 @@ function ProdutosPage() {
   const [textoLido, setTextoLido] = useState("");
   const [linhas, setLinhas] = useState<LinhaOcr[]>([]);
   const [cameraAtiva, setCameraAtiva] = useState(false);
+  const [resolucaoCamera, setResolucaoCamera] = useState("");
   const [capturaAutomatica, setCapturaAutomatica] = useState(true);
   const capturaAutomaticaRef = useRef(true);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -80,6 +81,7 @@ function ProdutosPage() {
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setCameraAtiva(false);
+    setResolucaoCamera("");
     stableFramesRef.current = 0;
   }
 
@@ -188,7 +190,7 @@ function ProdutosPage() {
     const context = canvas.getContext("2d");
     if (!context) return;
     context.drawImage(video, 0, 0);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.98));
     if (!blob) return;
     stopCamera();
     await processDocument(blob, `captura-${new Date().toLocaleTimeString("pt-BR").replaceAll(":", "-")}.jpg`);
@@ -201,7 +203,21 @@ function ProdutosPage() {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 3840, min: 1280 },
+          height: { ideal: 2160, min: 720 },
+        },
+        audio: false,
+      });
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const capabilities = track.getCapabilities() as MediaTrackCapabilities & { focusMode?: string[] };
+        if (capabilities.focusMode?.includes("continuous")) {
+          await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => undefined);
+        }
+      }
       streamRef.current = stream;
       setCameraAtiva(true);
     } catch {
@@ -216,18 +232,39 @@ function ProdutosPage() {
     if (!video || !stream) return;
     video.srcObject = stream;
     void video.play().then(() => {
+      const updateResolution = () => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          setResolucaoCamera(`${video.videoWidth} × ${video.videoHeight}`);
+        }
+      };
+      updateResolution();
+      video.addEventListener("loadedmetadata", updateResolution, { once: true });
       if (scanTimerRef.current !== null) window.clearInterval(scanTimerRef.current);
       scanTimerRef.current = window.setInterval(() => {
         const currentVideo = videoRef.current;
         if (!capturaAutomaticaRef.current || !currentVideo || currentVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || currentVideo.videoWidth === 0) return;
         const canvas = document.createElement("canvas");
-        canvas.width = 240;
-        canvas.height = Math.round(240 * (currentVideo.videoHeight / currentVideo.videoWidth));
+        canvas.width = 360;
+        canvas.height = Math.round(360 * (currentVideo.videoHeight / currentVideo.videoWidth));
         const context = canvas.getContext("2d");
         if (!context) return;
         context.drawImage(currentVideo, 0, 0, canvas.width, canvas.height);
-        stableFramesRef.current = frameLooksLikeDocument(canvas) ? stableFramesRef.current + 1 : 0;
-        if (stableFramesRef.current >= 3) void captureCamera();
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let detail = 0;
+        let samples = 0;
+        for (let y = 1; y < canvas.height - 1; y += 3) {
+          for (let x = 1; x < canvas.width - 1; x += 3) {
+            const current = (y * canvas.width + x) * 4;
+            const right = current + 4;
+            const below = current + canvas.width * 4;
+            const luminance = (index: number) => (pixels[index] ?? 0) * 0.299 + (pixels[index + 1] ?? 0) * 0.587 + (pixels[index + 2] ?? 0) * 0.114;
+            detail += Math.abs(luminance(current) - luminance(right)) + Math.abs(luminance(current) - luminance(below));
+            samples += 2;
+          }
+        }
+        const isSharp = samples > 0 && detail / samples >= 8;
+        stableFramesRef.current = frameLooksLikeDocument(canvas) && isSharp ? stableFramesRef.current + 1 : 0;
+        if (stableFramesRef.current >= 5) void captureCamera();
       }, 700);
     }).catch(() => {
       setErroLeitura("A câmera foi autorizada, mas a imagem não pôde ser exibida. Tente fechar e abrir novamente.");
@@ -438,7 +475,10 @@ function ProdutosPage() {
                     <div className="relative aspect-[3/4] max-h-[30rem] overflow-hidden rounded-md bg-muted">
                       <video ref={connectCamera} autoPlay muted playsInline className="h-full w-full object-cover" aria-label="Imagem da câmera" />
                       <div className="pointer-events-none absolute inset-[8%] rounded-md border-2 border-primary shadow-[0_0_0_999px_hsl(var(--foreground)/0.28)]" />
-                      <p className="absolute inset-x-3 bottom-3 rounded-md bg-background/90 px-3 py-2 text-center text-xs text-foreground">Mantenha a nota inteira, iluminada e estável dentro da moldura.</p>
+                      <p className="absolute inset-x-3 bottom-3 rounded-md bg-background/90 px-3 py-2 text-center text-xs text-foreground">
+                        Mantenha a nota inteira, iluminada e estável dentro da moldura.
+                        {resolucaoCamera ? <span className="mt-1 block text-muted-foreground">Câmera: {resolucaoCamera}</span> : null}
+                      </p>
                     </div>
                     <label className="flex items-center gap-2 text-sm text-foreground">
                       <input type="checkbox" checked={capturaAutomatica} onChange={(event) => {
