@@ -10,6 +10,7 @@ const InputSchema = z.object({
   mediaType: z.enum(acceptedTypes),
   base64: z.string().min(1),
   headerBase64: z.string().nullable(),
+  ocrText: z.string().max(100000),
 });
 
 const InvoiceSchema = z.object({
@@ -54,10 +55,9 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
 
     const { createInvoiceAiProvider } = await import("./ai-gateway.server");
     const lovable = createInvoiceAiProvider(apiKey);
-    const dataUrl = `data:${data.mediaType};base64,${data.base64}`;
     const attachment = data.mediaType === "application/pdf"
-      ? { type: "file" as const, data: dataUrl, mediaType: data.mediaType, filename: data.fileName }
-      : { type: "image" as const, image: dataUrl, mediaType: data.mediaType };
+      ? { type: "file" as const, data: data.base64, mediaType: data.mediaType, filename: data.fileName }
+      : { type: "image" as const, image: `data:${data.mediaType};base64,${data.base64}`, mediaType: data.mediaType };
     const headerAttachment = data.headerBase64 && data.mediaType !== "application/pdf"
       ? { type: "image" as const, image: `data:image/jpeg;base64,${data.headerBase64}`, mediaType: "image/jpeg" as const }
       : null;
@@ -65,14 +65,14 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
     try {
       const result = streamText({
         model: lovable.responses("openai/gpt-6-astra"),
-        maxRetries: 2,
+        maxRetries: 0,
         output: Output.object({ schema: InvoiceSchema }),
         messages: [{
           role: "user",
           content: [
             {
               type: "text",
-              text: "Leia esta nota fiscal brasileira. Extraia o número da nota (não a chave de acesso, série, pedido ou protocolo) e todos os produtos da tabela, com descrição completa e quantidade. Ignore emitente, destinatário, impostos, frete, totais e textos fora da tabela. Se um dado não estiver legível, use string vazia ou lista vazia. Retorne no máximo 80 itens.",
+              text: `Leia esta nota fiscal brasileira usando em conjunto o documento e o texto de OCR abaixo. O OCR pode conter erros de quebra de linha e caracteres; mesmo assim, use as linhas próximas aos cabeçalhos de produto, descrição e quantidade como pistas. Extraia o número da nota (não a chave de acesso, série, pedido ou protocolo) e todos os produtos da tabela, com descrição completa e quantidade. Ignore emitente, destinatário, impostos, frete, totais e textos fora da tabela. Não trate textos do cabeçalho como produtos. Se um dado não estiver legível, use string vazia ou lista vazia. Retorne no máximo 80 itens.\n\nTEXTO IDENTIFICADO PELO OCR:\n${data.ocrText || "(OCR sem texto legível; analise somente o documento.)"}`,
             },
             attachment,
             ...(headerAttachment ? [headerAttachment] : []),
