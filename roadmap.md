@@ -11,3 +11,4 @@
 - [x] Permitir complemento de liberações e revisão de recusas sem duplicar baixas de estoque.
 - [x] Permitir solicitar produtos ainda não cadastrados e validar os novos fluxos.
 - [x] Priorizar alta resolução e nitidez na captura de notas pela câmera.
+- [x] Enviar imagem e texto reconhecido à IA e permitir nova tentativa sem repetir a captura.

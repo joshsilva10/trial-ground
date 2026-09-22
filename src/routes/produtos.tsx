@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, FileImage, FileText, PackagePlus, Search, Trash2, X } from "lucide-react";
+import { Camera, FileImage, FileText, PackagePlus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/AppLayout";
 import { EmptyState, Field, Panel, btnOutline, btnPrimary, inputClass } from "@/components/Ui";
@@ -26,6 +26,7 @@ export const Route = createFileRoute("/produtos")({
 });
 
 type LinhaOcr = InvoiceLine;
+type ReadingStatus = "idle" | "running" | "success" | "error";
 
 const PAGINA = 8;
 
@@ -50,6 +51,9 @@ function ProdutosPage() {
   const [numeroNota, setNumeroNota] = useState("");
   const [textoLido, setTextoLido] = useState("");
   const [linhas, setLinhas] = useState<LinhaOcr[]>([]);
+  const [documentoTemporario, setDocumentoTemporario] = useState<{ file: Blob; fileName: string } | null>(null);
+  const [statusOcr, setStatusOcr] = useState<ReadingStatus>("idle");
+  const [statusIa, setStatusIa] = useState<ReadingStatus>("idle");
   const [cameraAtiva, setCameraAtiva] = useState(false);
   const [resolucaoCamera, setResolucaoCamera] = useState("");
   const [capturaAutomatica, setCapturaAutomatica] = useState(true);
@@ -127,33 +131,72 @@ function ProdutosPage() {
     return crop ? blobToBase64(crop) : null;
   }
 
+  async function prepareImageForAi(file: Blob) {
+    if (!file.type.startsWith("image/")) return file;
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const longestEdge = Math.max(bitmap.width, bitmap.height);
+    const scale = Math.min(1, 2400 / longestEdge);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    context?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const prepared = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    return prepared ?? file;
+  }
+
+  async function analyzeWithAi(file: Blob, fileName: string, ocrText: string) {
+    setStatusIa("running");
+    const mediaType = file.type;
+    if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp" && mediaType !== "application/pdf") {
+      setStatusIa("error");
+      throw new Error("Formato não aceito. Use JPEG, PNG, WebP ou PDF.");
+    }
+
+    try {
+      const aiFile = await prepareImageForAi(file);
+      const aiMediaType = aiFile.type;
+      if (aiMediaType !== "image/jpeg" && aiMediaType !== "image/png" && aiMediaType !== "image/webp" && aiMediaType !== "application/pdf") {
+        throw new Error("Formato não aceito. Use JPEG, PNG, WebP ou PDF.");
+      }
+      const aiResult = await extractWithAi({
+        data: {
+          fileName,
+          mediaType: aiMediaType,
+          base64: await blobToBase64(aiFile),
+          headerBase64: await makeHeaderCrop(file),
+          ocrText,
+        },
+      });
+      setStatusIa("success");
+      return aiResult;
+    } catch (error) {
+      setStatusIa("error");
+      throw error;
+    }
+  }
+
   async function processDocument(file: File | Blob, fileName: string) {
     setProcessando(true);
     setErroLeitura("");
     setProgresso(0);
     setArquivo(fileName);
     setLinhas([]);
+    setDocumentoTemporario({ file, fileName });
+    setStatusOcr("running");
+    setStatusIa("idle");
     try {
       const localResult = await readInvoice(file, (progress) => setProgresso(progress * 0.72));
       setTextoLido(localResult.texto);
+      setStatusOcr("success");
       setProgresso(0.78);
 
       let numero = localResult.numero;
       let items = localResult.linhas;
       let aiError = "";
       try {
-        const mediaType = file.type;
-        if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp" && mediaType !== "application/pdf") {
-          throw new Error("Formato não aceito. Use JPEG, PNG, WebP ou PDF.");
-        }
-        const aiResult = await extractWithAi({
-          data: {
-            fileName,
-            mediaType,
-            base64: await blobToBase64(file),
-            headerBase64: await makeHeaderCrop(file),
-          },
-        });
+        const aiResult = await analyzeWithAi(file, fileName, localResult.texto);
         // O cabeçalho da DANFE costuma ser mais confiável no OCR local; a IA
         // complementa o número apenas quando o scanner não encontrou nenhum.
         numero = numero || aiResult.numero;
@@ -175,9 +218,27 @@ function ProdutosPage() {
         toast.success("Leitura com IA concluída. Confira os dados antes de confirmar.");
       }
     } catch (error) {
+      setStatusOcr("error");
       setErroLeitura(error instanceof Error ? `Não foi possível ler o documento: ${error.message}` : "Não foi possível ler o documento.");
     } finally {
       setProcessando(false);
+    }
+  }
+
+  async function retryAiAnalysis() {
+    if (!documentoTemporario || statusIa === "running") return;
+    setErroLeitura("");
+    try {
+      const aiResult = await analyzeWithAi(documentoTemporario.file, documentoTemporario.fileName, textoLido);
+      if (aiResult.numero && !numeroNota) setNumeroNota(aiResult.numero);
+      if (aiResult.itens.length > 0) {
+        setLinhas(linkProducts(aiResult.itens));
+        toast.success("Análise com IA concluída. Confira os dados antes de confirmar.");
+      } else {
+        setErroLeitura("A IA analisou a nota, mas não encontrou itens. Confira o texto identificado ou adicione os itens manualmente.");
+      }
+    } catch (error) {
+      setErroLeitura(error instanceof Error ? error.message : "A leitura por IA não está disponível agora.");
     }
   }
 
@@ -279,6 +340,9 @@ function ProdutosPage() {
     setTextoLido("");
     setErroLeitura("");
     setProgresso(0);
+    setDocumentoTemporario(null);
+    setStatusOcr("idle");
+    setStatusIa("idle");
   }
 
   return (
@@ -497,7 +561,19 @@ function ProdutosPage() {
                 {processando ? (
                   <div role="status" className="space-y-1.5">
                     <div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(progresso * 100)}%` }} /></div>
-                    <p className="text-sm text-muted-foreground">Lendo documento… {Math.round(progresso * 100)}%</p>
+                    <p className="text-sm text-muted-foreground">
+                      {statusOcr === "running" ? "Lendo documento" : statusIa === "running" ? "Analisando itens com IA" : "Processando"}… {Math.round(progresso * 100)}%
+                    </p>
+                  </div>
+                ) : null}
+                {arquivo ? (
+                  <div className="flex flex-wrap gap-2 text-xs" aria-label="Etapas da leitura">
+                    <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">
+                      OCR: {statusOcr === "running" ? "em andamento" : statusOcr === "success" ? "concluído" : statusOcr === "error" ? "falhou" : "aguardando"}
+                    </span>
+                    <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">
+                      IA: {statusIa === "running" ? "em andamento" : statusIa === "success" ? "concluída" : statusIa === "error" ? "falhou" : "aguardando"}
+                    </span>
                   </div>
                 ) : null}
                 {erroLeitura ? <p role="alert" className="rounded-md bg-warning-soft px-3 py-2 text-xs text-warning-strong">{erroLeitura}</p> : null}
@@ -536,7 +612,10 @@ function ProdutosPage() {
                       </div>
                     ))}
                     <Button type="button" variant="outline" className="w-full" onClick={() => setLinhas((previous) => [...previous, { nome: "", quantidade: 1 }])}>Adicionar item</Button>
-                    {linhas.length === 0 && textoLido ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Ver texto identificado</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3">{textoLido}</pre></details> : null}
+                    {textoLido ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Ver texto identificado</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3">{textoLido}</pre></details> : null}
+                    <Button type="button" variant="outline" className="w-full" disabled={!documentoTemporario || statusIa === "running"} onClick={() => void retryAiAnalysis()}>
+                      <RefreshCw aria-hidden className={statusIa === "running" ? "animate-spin" : undefined} /> Tentar novamente com IA
+                    </Button>
                     <button
                       type="button"
                       className={`${btnPrimary} w-full`}
