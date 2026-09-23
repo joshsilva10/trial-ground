@@ -26,7 +26,7 @@ export const Route = createFileRoute("/produtos")({
 });
 
 type LinhaOcr = InvoiceLine;
-type ReadingStatus = "idle" | "running" | "success" | "error";
+type ReadingStatus = "idle" | "running" | "success" | "empty" | "error";
 
 const PAGINA = 8;
 
@@ -106,6 +106,20 @@ function ProdutosPage() {
     });
   }
 
+  function mergeRecognizedItems(localItems: InvoiceLine[], aiItems: InvoiceLine[]) {
+    const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
+    const merged = [...aiItems];
+    for (const localItem of localItems) {
+      const localName = normalize(localItem.nome);
+      const alreadyPresent = merged.some((item) => {
+        const aiName = normalize(item.nome);
+        return aiName === localName || aiName.includes(localName) || localName.includes(aiName);
+      });
+      if (!alreadyPresent) merged.push(localItem);
+    }
+    return merged.slice(0, 80);
+  }
+
   async function blobToBase64(file: Blob) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const chunkSize = 0x8000;
@@ -169,7 +183,7 @@ function ProdutosPage() {
           ocrText,
         },
       });
-      setStatusIa("success");
+      setStatusIa(aiResult.analysis === "items_found" ? "success" : "empty");
       return aiResult;
     } catch (error) {
       setStatusIa("error");
@@ -200,7 +214,7 @@ function ProdutosPage() {
         // O cabeçalho da DANFE costuma ser mais confiável no OCR local; a IA
         // complementa o número apenas quando o scanner não encontrou nenhum.
         numero = numero || aiResult.numero;
-        if (aiResult.itens.length > 0) items = aiResult.itens;
+        if (aiResult.itens.length > 0) items = mergeRecognizedItems(localResult.linhas, aiResult.itens);
       } catch (error) {
         aiError = error instanceof Error ? error.message : "A leitura por IA não está disponível agora.";
       }
@@ -209,7 +223,7 @@ function ProdutosPage() {
       setNumeroNota(numero);
       setLinhas(linkProducts(items));
       if (items.length === 0) {
-        setErroLeitura(aiError || "Nenhum item pôde ser identificado. Confira o conteúdo e adicione os itens manualmente.");
+        setErroLeitura(aiError || "A análise inteligente foi executada, mas não identificou itens. Confira o texto identificado ou adicione-os manualmente.");
       } else if (!numero) {
         setErroLeitura("Os itens foram identificados, mas o número da nota precisa ser informado manualmente.");
       } else if (aiError) {
@@ -232,10 +246,10 @@ function ProdutosPage() {
       const aiResult = await analyzeWithAi(documentoTemporario.file, documentoTemporario.fileName, textoLido);
       if (aiResult.numero && !numeroNota) setNumeroNota(aiResult.numero);
       if (aiResult.itens.length > 0) {
-        setLinhas(linkProducts(aiResult.itens));
+        setLinhas((current) => linkProducts(mergeRecognizedItems(current, aiResult.itens)));
         toast.success("Análise com IA concluída. Confira os dados antes de confirmar.");
       } else {
-        setErroLeitura("A IA analisou a nota, mas não encontrou itens. Confira o texto identificado ou adicione os itens manualmente.");
+        setErroLeitura("A análise inteligente foi executada, mas não identificou itens. Confira o texto identificado ou adicione-os manualmente.");
       }
     } catch (error) {
       setErroLeitura(error instanceof Error ? error.message : "A leitura por IA não está disponível agora.");
@@ -572,7 +586,7 @@ function ProdutosPage() {
                       OCR: {statusOcr === "running" ? "em andamento" : statusOcr === "success" ? "concluído" : statusOcr === "error" ? "falhou" : "aguardando"}
                     </span>
                     <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">
-                      IA: {statusIa === "running" ? "em andamento" : statusIa === "success" ? "concluída" : statusIa === "error" ? "falhou" : "aguardando"}
+                       IA: {statusIa === "running" ? "em andamento" : statusIa === "success" ? "concluída" : statusIa === "empty" ? "concluída sem itens" : statusIa === "error" ? "falhou" : "aguardando"}
                     </span>
                   </div>
                 ) : null}

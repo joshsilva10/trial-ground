@@ -12,4 +12,4 @@
 - [x] Permitir solicitar produtos ainda não cadastrados e validar os novos fluxos.
 - [x] Priorizar alta resolução e nitidez na captura de notas pela câmera.
 - [x] Enviar imagem e texto reconhecido à IA e permitir nova tentativa sem repetir a captura.
-- [ ] Corrigir a execução da IA, reconstruir itens fragmentados e distinguir resposta vazia, sem validar o fluxo por enquanto.
+- [x] Corrigir a execução da IA, reconstruir itens fragmentados e distinguir resposta vazia, sem validar o fluxo por enquanto.
