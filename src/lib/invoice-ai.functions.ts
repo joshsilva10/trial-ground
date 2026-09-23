@@ -19,9 +19,10 @@ const InvoiceSchema = z.object({
 });
 
 type InvoiceAiResult = z.infer<typeof InvoiceSchema>;
+type InvoiceAiResponse = InvoiceAiResult & { analysis: "items_found" | "no_items" };
 
-function normalizeResult(value: InvoiceAiResult): InvoiceAiResult {
-  return {
+function normalizeResult(value: InvoiceAiResult): InvoiceAiResponse {
+  const normalized = {
     numero: value.numero.replace(/\D/g, "").slice(0, 12),
     itens: value.itens
       .map((item) => ({
@@ -31,6 +32,7 @@ function normalizeResult(value: InvoiceAiResult): InvoiceAiResult {
       .filter((item) => item.nome.length >= 3 && Number.isFinite(item.quantidade) && item.quantidade > 0 && item.quantidade <= 100000)
       .slice(0, 80),
   };
+  return { ...normalized, analysis: normalized.itens.length > 0 ? "items_found" : "no_items" };
 }
 
 function messageFromError(error: unknown) {
@@ -57,9 +59,9 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
     const lovable = createInvoiceAiProvider(apiKey);
     const attachment = data.mediaType === "application/pdf"
       ? { type: "file" as const, data: data.base64, mediaType: data.mediaType, filename: data.fileName }
-      : { type: "image" as const, image: `data:${data.mediaType};base64,${data.base64}`, mediaType: data.mediaType };
+      : { type: "image" as const, image: new URL(`data:${data.mediaType};base64,${data.base64}`), mediaType: data.mediaType };
     const headerAttachment = data.headerBase64 && data.mediaType !== "application/pdf"
-      ? { type: "image" as const, image: `data:image/jpeg;base64,${data.headerBase64}`, mediaType: "image/jpeg" as const }
+      ? { type: "image" as const, image: new URL(`data:image/jpeg;base64,${data.headerBase64}`), mediaType: "image/jpeg" as const }
       : null;
 
     try {
@@ -91,7 +93,7 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
       return normalizeResult(await result.output);
     } catch (error) {
       if (NoObjectGeneratedError.isInstance(error)) {
-        throw new Error("A IA leu o documento, mas não conseguiu organizar os dados. Tente uma foto mais nítida.");
+        throw new Error("A análise inteligente recebeu o documento, mas não conseguiu organizar os dados. O texto identificado foi preservado.");
       }
       throw new Error(messageFromError(error));
     }

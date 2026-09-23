@@ -9,6 +9,66 @@ function normalizeSpaces(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+const PRODUCT_TABLE_HEADER = /(?:c[oó]d(?:igo)?\s*(?:produto)?|descri[cç][aã]o|produto\/servi[cç]o|qtd|qtde|quantidade|vlr?\.?\s*unit)/i;
+const PRODUCT_TABLE_END = /^(?:c[aá]lculo|base de c[aá]lculo|valor total|transportador|dados adicionais|informa[cç][oõ]es|reservado ao fisco)/i;
+const PRODUCT_NOISE = /^(?:item|c[oó]d(?:igo)?|ncm|cst|cfop|un(?:id)?|qtd|qtde|quantidade|vlr|valor|bc|icms|ipi)(?:\s|$)/i;
+
+function cleanProductName(value: string) {
+  return normalizeSpaces(value)
+    .replace(/^\d{5,14}\s+/, "")
+    .replace(/\s+(?:un|und|unid|pc|pct|cx|kg|lt|l)$/i, "")
+    .replace(/^[|:;.,\-\s]+|[|:;,\-\s]+$/g, "")
+    .trim();
+}
+
+function validQuantity(value: string | undefined) {
+  if (!value) return null;
+  const parsed = Number(value.replace(/\s/g, "").replace(".", "").replace(",", "."));
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 100000 ? parsed : null;
+}
+
+function parseFragmentedTable(lines: string[]) {
+  const parsed: InvoiceLine[] = [];
+  let insideTable = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (PRODUCT_TABLE_HEADER.test(line)) {
+      insideTable = true;
+      continue;
+    }
+    if (!insideTable || PRODUCT_TABLE_END.test(line)) {
+      if (insideTable && PRODUCT_TABLE_END.test(line)) break;
+      continue;
+    }
+    if (PRODUCT_NOISE.test(line) || line.length < 4) continue;
+
+    const inlineQuantity = line.match(/(?:qtd|qtde|quantidade)\s*[:x-]?\s*(\d+(?:[.,]\d+)?)/i);
+    const trailingColumns = line.match(/^(.{3,}?[A-Za-zÀ-ÿ][^|]{2,}?)\s+(?:un|und|unid|pc|pct|cx|kg|lt|l)?\s*(\d+(?:[.,]\d+)?)\s+(?:\d+[.,]\d{2})(?:\s+\d+[.,]\d{2})/i);
+    let nome = cleanProductName(trailingColumns?.[1] ?? line.replace(inlineQuantity?.[0] ?? "", ""));
+    let quantidade = validQuantity(trailingColumns?.[2] ?? inlineQuantity?.[1]);
+
+    if (quantidade === null && /[A-Za-zÀ-ÿ]{3}/.test(nome)) {
+      for (let lookAhead = index + 1; lookAhead <= Math.min(index + 4, lines.length - 1); lookAhead += 1) {
+        const candidate = lines[lookAhead] ?? "";
+        if (PRODUCT_TABLE_END.test(candidate) || PRODUCT_TABLE_HEADER.test(candidate)) break;
+        const labelled = candidate.match(/(?:qtd|qtde|quantidade)\s*[:x-]?\s*(\d+(?:[.,]\d+)?)/i);
+        const unitColumn = candidate.match(/^(?:un|und|unid|pc|pct|cx|kg|lt|l)\s+(\d+(?:[.,]\d+)?)(?:\s|$)/i);
+        const numericColumns = candidate.match(/^(\d+(?:[.,]\d+)?)\s+\d+[.,]\d{2}(?:\s|$)/);
+        quantidade = validQuantity(labelled?.[1] ?? unitColumn?.[1] ?? numericColumns?.[1]);
+        if (quantidade !== null) break;
+        if (/[A-Za-zÀ-ÿ]{3}/.test(candidate) && !PRODUCT_NOISE.test(candidate)) {
+          nome = cleanProductName(`${nome} ${candidate}`);
+        }
+      }
+    }
+
+    if (nome.length >= 3 && quantidade !== null) parsed.push({ nome, quantidade });
+  }
+
+  return parsed;
+}
+
 export function parseInvoiceText(text: string): InvoiceRead {
   const clean = text.replace(/\r/g, "");
   const numberPatterns = [
@@ -38,6 +98,8 @@ export function parseInvoiceText(text: string): InvoiceRead {
       parsed.push({ nome, quantidade });
     }
   }
+
+  parsed.push(...parseFragmentedTable(clean.split("\n").map(normalizeSpaces).filter(Boolean)));
 
   const unique = parsed.filter((item, index, all) =>
     all.findIndex((candidate) => candidate.nome.toLowerCase() === item.nome.toLowerCase() && candidate.quantidade === item.quantidade) === index,
