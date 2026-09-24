@@ -13,3 +13,4 @@
 - [x] Priorizar alta resolução e nitidez na captura de notas pela câmera.
 - [x] Enviar imagem e texto reconhecido à IA e permitir nova tentativa sem repetir a captura.
 - [x] Corrigir a execução da IA, reconstruir itens fragmentados e distinguir resposta vazia, sem validar o fluxo por enquanto.
+- [x] Reconhecer tabelas de nota repetidas e fragmentadas e ocultar erros técnicos da análise inteligente.

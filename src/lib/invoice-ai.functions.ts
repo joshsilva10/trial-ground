@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { NoObjectGeneratedError, Output, streamText } from "ai";
+import { NoObjectGeneratedError, NoOutputGeneratedError, Output, streamText } from "ai";
 import { z } from "zod";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -43,7 +43,16 @@ function messageFromError(error: unknown) {
   if (status === 429) return "A leitura por IA está temporariamente sobrecarregada. Tente novamente em alguns instantes.";
   if (status === 400) return candidate.message || "A IA não conseguiu processar este arquivo. Confira o formato e tente outra imagem.";
   if (status === 401) return "A leitura por IA não está configurada corretamente.";
-  return candidate?.message || "A leitura por IA não está disponível agora.";
+  return "A análise inteligente não conseguiu concluir a leitura. O texto identificado foi preservado; tente novamente.";
+}
+
+function logSafeAiFailure(error: unknown) {
+  const candidate = error as { name?: string; statusCode?: number; status?: number; cause?: { name?: string } };
+  console.error("Falha na extração da nota por IA", {
+    name: candidate?.name ?? "UnknownError",
+    status: candidate?.statusCode ?? candidate?.status ?? null,
+    cause: candidate?.cause?.name ?? null,
+  });
 }
 
 export const extractInvoiceWithAi = createServerFn({ method: "POST" })
@@ -92,8 +101,12 @@ export const extractInvoiceWithAi = createServerFn({ method: "POST" })
       });
       return normalizeResult(await result.output);
     } catch (error) {
+      logSafeAiFailure(error);
       if (NoObjectGeneratedError.isInstance(error)) {
         throw new Error("A análise inteligente recebeu o documento, mas não conseguiu organizar os dados. O texto identificado foi preservado.");
+      }
+      if (NoOutputGeneratedError.isInstance(error)) {
+        throw new Error("A análise inteligente não produziu uma resposta utilizável. O texto identificado foi preservado; tente novamente.");
       }
       throw new Error(messageFromError(error));
     }
