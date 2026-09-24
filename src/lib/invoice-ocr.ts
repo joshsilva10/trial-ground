@@ -9,9 +9,11 @@ function normalizeSpaces(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-const PRODUCT_TABLE_HEADER = /(?:c[oó]d(?:igo)?\s*(?:produto)?|descri[cç][aã]o|produto\/servi[cç]o|qtd|qtde|quantidade|vlr?\.?\s*unit)/i;
-const PRODUCT_TABLE_END = /^(?:c[aá]lculo|base de c[aá]lculo|valor total|transportador|dados adicionais|informa[cç][oõ]es|reservado ao fisco)/i;
+const PRODUCT_DESCRIPTION_HEADER = /(?:c[oó]d(?:igo)?\s+.*descri[cç][aã]o|descri[cç][aã]o\s+(?:do\s+)?(?:produto|servi[cç]o))/i;
+const PRODUCT_COLUMNS_HEADER = /(?:qtd|qto|qtde|quantidade|unid|vlr?\.?\s*unit|valor\s+unit)/i;
+const PRODUCT_TABLE_END = /^(?:c[aá]lculo\s+do\s+issqn|dados adicionais|informa[cç][oõ]es complementares|reservado ao fisco)/i;
 const PRODUCT_NOISE = /^(?:item|c[oó]d(?:igo)?|ncm|cst|cfop|un(?:id)?|qtd|qtde|quantidade|vlr|valor|bc|icms|ipi)(?:\s|$)/i;
+const NON_PRODUCT_TEXT = /^(?:frete|transportador|placa|peso|al[ií]quota|inscri[cç][aã]o|base de c[aá]lculo|valor total|c[aá]lculo|dados adicionais|informa[cç][oõ]es|reservado|sem frete)/i;
 
 function cleanProductName(value: string) {
   return normalizeSpaces(value)
@@ -27,45 +29,63 @@ function validQuantity(value: string | undefined) {
   return Number.isFinite(parsed) && parsed > 0 && parsed <= 100000 ? parsed : null;
 }
 
+function tableRegions(lines: string[]) {
+  const regions: string[][] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const nearbyHeaders = lines.slice(Math.max(0, index - 5), index + 2).join(" ");
+    if (!PRODUCT_DESCRIPTION_HEADER.test(lines[index] ?? "") || !PRODUCT_COLUMNS_HEADER.test(nearbyHeaders)) continue;
+    const region: string[] = [];
+    for (let cursor = index + 1; cursor < Math.min(lines.length, index + 35); cursor += 1) {
+      const line = lines[cursor] ?? "";
+      if (PRODUCT_TABLE_END.test(line)) break;
+      if (cursor > index + 1 && PRODUCT_DESCRIPTION_HEADER.test(line)) break;
+      region.push(line);
+    }
+    if (region.length > 0) regions.push(region);
+  }
+  return regions;
+}
+
+function quantityFromRegion(region: string[], descriptionIndex: number) {
+  const nearby = region.slice(Math.max(0, descriptionIndex - 8), descriptionIndex + 2).join(" ");
+  const labelled = nearby.match(/(?:qtd|qto|qtde|quantidade)\s*[:x-]?\s*(\d+(?:[.,]\d+)?)/i);
+  const labelledQuantity = validQuantity(labelled?.[1]);
+  if (labelledQuantity !== null) return labelledQuantity;
+
+  const candidates: number[] = [];
+  for (const line of region.slice(Math.max(0, descriptionIndex - 8), descriptionIndex)) {
+    const firstColumn = line.match(/^\s*(\d{1,5}[.,]\d{3,4})(?:\s|$)/)?.[1];
+    const standalone = line.match(/^\s*(\d{1,5}[.,]\d{3,4})\s*$/)?.[1];
+    const quantity = validQuantity(firstColumn ?? standalone);
+    if (quantity !== null) candidates.push(quantity);
+  }
+  return candidates[0] ?? null;
+}
+
+function isDescriptionLine(line: string) {
+  if (!/[A-Za-zÀ-ÿ]{2}/.test(line)) return false;
+  if (PRODUCT_NOISE.test(line) || PRODUCT_COLUMNS_HEADER.test(line) || NON_PRODUCT_TEXT.test(line)) return false;
+  return !/^\d[\d.,/\s-]*$/.test(line);
+}
+
 function parseFragmentedTable(lines: string[]) {
   const parsed: InvoiceLine[] = [];
-  let insideTable = false;
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (PRODUCT_TABLE_HEADER.test(line)) {
-      insideTable = true;
-      continue;
-    }
-    if (!insideTable || PRODUCT_TABLE_END.test(line)) {
-      if (insideTable && PRODUCT_TABLE_END.test(line)) break;
-      continue;
-    }
-    if (PRODUCT_NOISE.test(line) || line.length < 4) continue;
-
-    const inlineQuantity = line.match(/(?:qtd|qtde|quantidade)\s*[:x-]?\s*(\d+(?:[.,]\d+)?)/i);
-    const trailingColumns = line.match(/^(.{3,}?[A-Za-zÀ-ÿ][^|]{2,}?)\s+(?:un|und|unid|pc|pct|cx|kg|lt|l)?\s*(\d+(?:[.,]\d+)?)\s+(?:\d+[.,]\d{2})(?:\s+\d+[.,]\d{2})/i);
-    let nome = cleanProductName(trailingColumns?.[1] ?? line.replace(inlineQuantity?.[0] ?? "", ""));
-    let quantidade = validQuantity(trailingColumns?.[2] ?? inlineQuantity?.[1]);
-
-    if (quantidade === null && /[A-Za-zÀ-ÿ]{3}/.test(nome)) {
-      for (let lookAhead = index + 1; lookAhead <= Math.min(index + 4, lines.length - 1); lookAhead += 1) {
-        const candidate = lines[lookAhead] ?? "";
-        if (PRODUCT_TABLE_END.test(candidate) || PRODUCT_TABLE_HEADER.test(candidate)) break;
-        const labelled = candidate.match(/(?:qtd|qtde|quantidade)\s*[:x-]?\s*(\d+(?:[.,]\d+)?)/i);
-        const unitColumn = candidate.match(/^(?:un|und|unid|pc|pct|cx|kg|lt|l)\s+(\d+(?:[.,]\d+)?)(?:\s|$)/i);
-        const numericColumns = candidate.match(/^(\d+(?:[.,]\d+)?)\s+\d+[.,]\d{2}(?:\s|$)/);
-        quantidade = validQuantity(labelled?.[1] ?? unitColumn?.[1] ?? numericColumns?.[1]);
-        if (quantidade !== null) break;
-        if (/[A-Za-zÀ-ÿ]{3}/.test(candidate) && !PRODUCT_NOISE.test(candidate)) {
-          nome = cleanProductName(`${nome} ${candidate}`);
-        }
+  for (const region of tableRegions(lines)) {
+    for (let index = 0; index < region.length; index += 1) {
+      const line = region[index] ?? "";
+      if (!isDescriptionLine(line)) continue;
+      const parts = [line];
+      let cursor = index + 1;
+      while (cursor < region.length && cursor <= index + 3 && isDescriptionLine(region[cursor] ?? "")) {
+        parts.push(region[cursor] ?? "");
+        cursor += 1;
       }
+      const nome = cleanProductName(parts.join(" "));
+      const quantidade = quantityFromRegion(region, index);
+      if (nome.length >= 5 && quantidade !== null) parsed.push({ nome, quantidade });
+      index = cursor - 1;
     }
-
-    if (nome.length >= 3 && quantidade !== null) parsed.push({ nome, quantidade });
   }
-
   return parsed;
 }
 
@@ -101,9 +121,15 @@ export function parseInvoiceText(text: string): InvoiceRead {
 
   parsed.push(...parseFragmentedTable(clean.split("\n").map(normalizeSpaces).filter(Boolean)));
 
-  const unique = parsed.filter((item, index, all) =>
-    all.findIndex((candidate) => candidate.nome.toLowerCase() === item.nome.toLowerCase() && candidate.quantidade === item.quantidade) === index,
-  );
+  const comparableName = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const unique = parsed.filter((item, index, all) => {
+    const itemName = comparableName(item.nome);
+    return all.findIndex((candidate) => {
+      if (candidate.quantidade !== item.quantidade) return false;
+      const candidateName = comparableName(candidate.nome);
+      return candidateName === itemName || candidateName.includes(itemName) || itemName.includes(candidateName);
+    }) === index;
+  });
   return { numero, linhas: unique.slice(0, 80), texto: clean };
 }
 
